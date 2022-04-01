@@ -86,6 +86,7 @@ func (segment *BaseSegment) Terms() []*QueryTerm {
 const SegmentKind_Search = "search"
 const SegmentKind_GroupBy = "groupby"
 const SegmentKind_SortBy = "sortby"
+const SegmentKind_Table = "table"
 
 func NewSegment(kind string, terms []*QueryTerm) (QuerySegment, error) {
   switch kind {
@@ -95,6 +96,8 @@ func NewSegment(kind string, terms []*QueryTerm) (QuerySegment, error) {
     return NewGroupBySegment(terms)
   case SegmentKind_SortBy:
     return NewSortBySegment(terms)
+  case SegmentKind_Table:
+    return NewTableSegment(terms)
   }
   return nil, errors.New("ERROR_QUERY_INVALID__SEGMENT_UNSUPPORTED")
 }
@@ -276,6 +279,35 @@ func (segment *GroupBySegment) String() string {
   return segment.Kind() + " " + segment.TermsAsString()
 }
 
+type TableSegment struct {
+  *BaseSegment
+}
+
+func NewTableSegmentEmpty() *TableSegment {
+  return &TableSegment{
+    &BaseSegment{
+      terms: make([]*QueryTerm, 0, 0),
+    },
+  }
+}
+
+func NewTableSegment(terms []*QueryTerm) (*TableSegment, error) {
+  if terms == nil || len(terms) == 0 {
+    return nil, errors.New("ERROR_QUERY_INVALID__TABLE_TERMS_MISSING")
+  }
+
+  segment := NewTableSegmentEmpty()
+  segment.terms = terms
+
+  return segment, nil
+}
+func (segment *TableSegment) Kind() string {
+  return SegmentKind_Table
+}
+
+func (segment *TableSegment) String() string {
+  return segment.Kind() + " " + segment.TermsAsString()
+}
 type SortBySegment struct {
   *BaseSegment
 }
@@ -520,6 +552,20 @@ func (query *Query) Group(field string) (string, error) {
   }
   groupBySegment := segment.(*GroupBySegment)
   err = groupBySegment.AddField(field)
+
+  return query.String(), err
+}
+
+func (query *Query) Table(field string) (string, error) {
+  var err error
+
+  segment := query.NamedSegment(SegmentKind_Table)
+  if segment == nil {
+    segment = NewTableSegmentEmpty()
+    query.AddSegment(segment)
+  }
+  tableSegment := segment.(*TableSegment)
+  err = tableSegment.AddField(field)
 
   return query.String(), err
 }

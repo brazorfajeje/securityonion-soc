@@ -13,6 +13,7 @@ import (
 	"errors"
 	"github.com/security-onion-solutions/securityonion-soc/json"
 	"github.com/security-onion-solutions/securityonion-soc/model"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -42,6 +43,28 @@ func makeAggregation(store *ElasticEventstore, prefix string, keys []string, cou
 		inner[innerName] = innerAgg
 		agg["aggs"] = inner
 	}
+	return agg, name
+}
+
+func makeTable(store *ElasticEventstore, prefix string, keys []string, count int, ascending bool) (map[string]interface{}, string) {
+	agg := make(map[string]interface{})
+	orderFields := make(map[string]interface{})
+	orderFields["_count"] = "desc"
+	if ascending {
+		orderFields["_count"] = "asc"
+	}
+	aggFields := make(map[string]interface{})
+	if strings.HasSuffix(keys[0], "*") {
+		keys[0] = strings.TrimSuffix(keys[0], "*")
+		aggFields["missing"] = "__missing__"
+	}
+
+	aggFields["field"] = store.mapElasticField(keys[0])
+	aggFields["size"] = count
+	aggFields["order"] = orderFields
+	agg["terms"] = aggFields
+
+	name := prefix + "|" + keys[0]
 	return agg, name
 }
 
@@ -199,6 +222,17 @@ func convertToElasticRequest(store *ElasticEventstore, criteria *model.EventSear
 				agg, name := makeAggregation(store, "groupby", fields, criteria.MetricLimit, false)
 				aggregations[name] = agg
 				aggregations["bottom"], _ = makeAggregation(store, "", fields[0:1], criteria.MetricLimit, true)
+			}
+		}
+		tablesegment := criteria.ParsedQuery.NamedSegment(model.SegmentKind_Table)
+		if tablesegment != nil {
+			tableSegment := tablesegment.(*model.TableSegment)
+			fields := tableSegment.RawFields()
+			if len(fields) > 0 {
+				for i, field := range fields {
+					aggregations["table-" + strconv.Itoa(i) + "|" + field], _ = makeTable(store, "", fields[i:i+1], criteria.MetricLimit, false)
+				}
+				aggregations["bottom"], _ = makeTable(store, "", fields[0:1], criteria.MetricLimit, true)
 			}
 		}
 	}

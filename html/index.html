@@ -48,6 +48,14 @@
               <v-icon color="warning">fa-exclamation</v-icon>
             </v-list-item-icon>
           </v-list-item>
+          <v-list-item @click="" to="/dashboards">
+            <v-list-item-action>
+              <v-icon>fa-table</v-icon>
+            </v-list-item-action>
+            <v-list-item-content>
+              <v-list-item-title v-text="i18n.dashboards"></v-list-item-title>
+            </v-list-item-content>
+          </v-list-item>
           <v-list-item @click="" to="/hunt">
             <v-list-item-action>
               <v-icon>fa-crosshairs</v-icon>
@@ -355,11 +363,14 @@
                     <v-divider></v-divider>
                     <v-list-item v-for="query in queries" :key="query.query">
                       <v-list-item-content @click="huntQuery(query.query)" :style="{ cursor: 'pointer'}">
-                        <v-list-item-title v-text="query.query"></v-list-item-title>
-                        <v-list-item-subtitle>
+                        <v-list-item-title v-if="!isCategory('dashboards')">
                           <span v-if="query.name.length > 0" class="text-primary">{{ query.name }} &mdash;</span>
                           {{ query.description }}
-                        </v-list-item-subtitle>
+                        </v-list-item-title>
+                        <v-list-item-title v-if="isCategory('dashboards')">
+                          <span v-if="query.name.length > 0" class="text-primary">{{ query.name }}</span>
+                        </v-list-item-title>
+                        <v-list-item-subtitle v-if="!isCategory('dashboards')" v-text="query.query"></v-list-item-subtitle>
                       </v-list-item-content>
                     </v-list-item>
                   </v-list>
@@ -422,21 +433,26 @@
               </template>
             </v-text-field>
             <v-btn id="hunt" :disabled="loading()" :color="huntPending ? 'light-green accent-4' : (autoRefreshInterval ? 'secondary' : 'primary')" @click.stop="hunt">
-              <span v-if="isAdvanced()" class="d-sm-none d-lg-inline pr-2" v-text="i18n.hunt"></span>
+              <span v-if="isAdvanced() && !isCategory('dashboards')" class="d-sm-none d-lg-inline pr-2" v-text="i18n.hunt"></span>
+              <span v-if="isAdvanced() && isCategory('dashboards')" class="d-sm-none d-lg-inline pr-2" v-text="i18n.refresh"></span>
               <span v-if="!isAdvanced()" class="d-sm-none d-lg-inline pr-2" v-text="i18n.refresh"></span>
-              <v-icon v-if="isAdvanced() && !autoRefreshInterval">fa-crosshairs</v-icon>
+              <v-icon v-if="isAdvanced() && !isCategory('dashboards') && !autoRefreshInterval">fa-crosshairs</v-icon>
+              <v-icon v-if="isAdvanced() && isCategory('dashboards') && !autoRefreshInterval">fa-sync</v-icon>
               <v-icon v-if="!isAdvanced() && !autoRefreshInterval">fa-sync</v-icon>
               <v-icon v-if="autoRefreshInterval">fa-hourglass-half</v-icon>
             </v-btn>
           </v-col>
         </v-row>
-        <v-row v-if="loaded && (queryFilters.length > 0 || queryGroupBys.length > 0 || querySortBys.length > 0)">
+        <v-row v-if="loaded && (queryFilters.length > 0 || queryGroupBys.length > 0 || querySortBys.length > 0 || queryTables.length > 0)">
           <v-col cols="12">
             <span v-for="filter in queryFilters" :key="filter">
               <v-chip class="filter mx-1 my-1" color="primary" close @click:close="removeFilter(filter)">{{ filter }}</v-chip>
             </span>
             <span v-for="groupBy in queryGroupBys" :key="groupBy">
               <v-chip class="groupBy mx-1 my-1" color="accent" close @click:close="removeGroupBy(groupBy)">{{ i18n.groupedBy }} {{ groupBy }}</v-chip>
+            </span>
+            <span v-for="table in queryTables" :key="table">
+              <v-chip class="table mx-1 my-1" color="green" close @click:close="removeTable(table)">{{ i18n.table }} {{ table }}</v-chip>
             </span>
             <span v-for="sortBy in querySortBys" :key="sortBy">
               <v-chip class="sortBy mx-1 my-1" color="secondary" close @click:close="removeSortBy(sortBy)">{{ i18n.sortedBy }} {{ sortBy }}</v-chip>
@@ -497,10 +513,8 @@
           <v-expand-transition>
             <v-row v-if="isExpandedSection('hunt-groups')">
               <v-col cols="12">
-                <v-data-table :search="groupByFilter" dense :sort-by.sync="groupBySortBy" :sort-desc.sync="groupBySortDesc" :footer-props="groupByFooters" 
-                  :items-per-page.sync="groupByItemsPerPage" must-sort :headers="groupByHeaders" :items="groupByData" :page.sync="groupByPage" :custom-sort="sortEvents">
-                  <template v-slot:top v-if="isAdvanced()">
-                    <v-container fluid>
+
+                    <v-container v-if="isAdvanced()" fluid>
                       <v-row>
                         <v-col cols="4"></v-col>
                         <v-col cols="2">
@@ -510,8 +524,10 @@
                           <v-text-field v-model="groupByFilter" clearable prepend-icon="fa-filter" :label="i18n.filterResults" single-line hide-details></v-text-field>
                         </v-col>
                       </v-row>
-                    </v-container>        
-                  </template>
+                    </v-container>
+
+               <v-data-table v-if="groupByEnabled" :search="groupByFilter" dense :sort-by.sync="groupBySortBy" :sort-desc.sync="groupBySortDesc" :footer-props="groupByFooters" 
+                  :items-per-page.sync="groupByItemsPerPage" must-sort :headers="groupByHeaders" :items="groupByData" :page.sync="groupByPage" :custom-sort="sortEvents">
                   <template v-slot:item="{ item, index }">
                     <tr>
                       <td>
@@ -542,8 +558,30 @@
                       </td>
                     </tr>
                   </template>
-    
                 </v-data-table>
+
+	      <v-row v-if="tableEnabled">
+	      <v-row></v-row>
+	      <v-col cols="12">
+	      <v-row>
+	      <div v-for="(field, tableIndex) in tableHeaders" :key="field[1]['value']">
+                <v-data-table height="375px" style="border:1px solid;" :search="groupByFilter" dense :sort-by.sync="groupBySortBy" :sort-desc.sync="groupBySortDesc" :footer-props="groupByFooters"
+                  :items-per-page.sync="groupByItemsPerPage" must-sort :headers="field" :items="tableData[tableIndex]" >
+                  <template v-slot:item="{ item, index }">
+                    <tr>
+                      <td>
+                        <div class="count-drilldown d-inline-block" v-text="item['count'].toLocaleString()"></div>
+                      </td>
+                      <td>
+                        <div class="quick-action-trigger d-inline-block" v-text="item['field']" @click="toggleQuickAction($event, item, [field[1]['value']].toString(), item['field'])"></div>
+                      </td>
+                    </tr>
+                  </template>
+                </v-data-table>
+	      </div>
+	      </v-row>
+	      </v-row>
+
               </v-col>
             </v-row>
           </v-expand-transition>
@@ -621,6 +659,9 @@
                                   <v-btn :disabled="!canQuery(item.key)" icon x-small :to="buildGroupByRoute(item.key)">
                                     <v-icon :alt="i18n.groupInclude" :title="i18n.groupIncludeHelp">fa-layer-group</v-icon>
                                   </v-btn>
+                                  <v-btn :disabled="!canQuery(item.key)" icon x-small :to="buildTableRoute(item.key)">
+                                    <v-icon :alt="i18n.tableInclude" :title="i18n.tableIncludeHelp">fa-table</v-icon>
+                                  </v-btn>
                                 </div>
                                 <div class="d-inline-block expansion" v-text="item.key"></div>
                               </td>
@@ -676,6 +717,14 @@
               </v-list-item-icon>
               <v-list-item-title class="white--text">
                 {{ i18n.filterDrilldown }}
+              </v-list-item-title>
+            </v-list-item>
+            <v-list-item id="actionTable" dense :to="tableRoute" :title="i18n.tableIncludeHelp">
+              <v-list-item-icon>
+                <v-icon :alt="i18n.tableInclude" color="white">fa-table</v-icon>
+              </v-list-item-icon>
+              <v-list-item-title class="white--text">
+                {{ i18n.tableInclude }}
               </v-list-item-title>
             </v-list-item>
             <v-list-item id="actionGroupBy" dense :to="groupByRoute" :title="i18n.groupIncludeHelp">

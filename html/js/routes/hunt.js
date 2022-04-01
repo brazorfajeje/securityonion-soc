@@ -30,6 +30,7 @@ const huntComponent = {
     queryName: '',
     queryFilters: [],
     queryGroupBys: [],
+    queryTables: [],
     querySortBys: [],
     eventFields: {},
     dateRange: '',
@@ -57,6 +58,8 @@ const huntComponent = {
     timelineChartData: {},
 
     metricsEnabled: false,
+    groupByEnabled: false,
+    tableEnabled: false,
     eventsEnabled: true,
     topChartOptions: {},
     topChartData: {},
@@ -73,6 +76,8 @@ const huntComponent = {
     groupByItemsPerPage: 10,
     groupByFooters: { 'items-per-page-options': [10,25,50,100,200,500] },
     groupByPage: 1,
+    tableHeaders: [],
+    tableData: [],
 
     eventLimitOptions: [10,25,50,100,200,500,1000,2000,5000],
     eventLimit: 100,
@@ -103,6 +108,7 @@ const huntComponent = {
     filterRouteExact: "",
     filterRouteDrilldown: "",
     groupByRoute: "",
+    tableRoute: "",
     quickActionVisible: false,
     quickActionX: 0,
     quickActionY: 0,
@@ -342,6 +348,10 @@ const huntComponent = {
         this.groupQuery(this.$route.query.groupByField);
         reRoute = true;
       }
+      if (this.$route.query.tableField) {
+        this.tableQuery(this.$route.query.tableField);
+        reRoute = true;
+      }
       if (reRoute) return false;
       return true;      
     },
@@ -369,9 +379,12 @@ const huntComponent = {
         this.populateEventTable(response.data.events);
 
         this.metricsEnabled = false;
+        this.groupByEnabled = false;
+        this.tableEnabled = false;
         if (response.data.metrics["bottom"] != undefined) {
           this.metricsEnabled = true;
           this.populateGroupByTable(response.data.metrics);
+          this.populateIndividualTables(response.data.metrics);
           this.populateChart(this.topChartData, response.data.metrics[this.lookupTopMetricKey(response.data.metrics)]);
           this.populateChart(this.bottomChartData, response.data.metrics["bottom"]);
         }
@@ -411,6 +424,20 @@ const huntComponent = {
     async groupQuery(field, notify = true) {
       try {
         const response = await this.$root.papi.get('query/grouped', { params: { 
+          query: this.query,
+          field: field,
+        }});
+        this.query = response.data;
+        if (notify) {
+          this.notifyInputsChanged(true);
+        }
+      } catch (error) {
+        this.$root.showError(error);
+      }
+    },
+    async tableQuery(field, notify = true) {
+      try {
+        const response = await this.$root.papi.get('query/tabled', { params: { 
           query: this.query,
           field: field,
         }});
@@ -567,6 +594,7 @@ const huntComponent = {
       this.queryName = "";
       this.queryFilters = [];
       this.queryGroupBys = [];
+      this.queryTables = [];
       this.querySortBys = [];
       var route = this;
       if (this.query) {
@@ -596,6 +624,16 @@ const huntComponent = {
                   if (item.split("\"").length % 2 == 1) {
                     // Will currently skip quoted items with spaces. 
                     route.queryGroupBys.push(item);
+                  }
+                }
+              });
+            }
+            if (segment.indexOf("table") == 0) {
+              segment.split(" ").forEach(function(item, index) {
+                if (index > 0 && item.trim().length > 0) {
+                  if (item.split("\"").length % 2 == 1) {
+                    // Will currently skip quoted items with spaces. 
+                    route.queryTables.push(item);
                   }
                 }
               });
@@ -673,6 +711,26 @@ const huntComponent = {
         this.obtainQueryDetails();
       }        
     },
+    removeTable(table) {
+      var segments = this.query.split("|");
+      var newQuery = segments[0];
+      for (var i = 1; i < segments.length; i++) {
+        if (segments[i].trim().indexOf("table") == 0) {
+          segments[i].replace(/,/g, ' ');
+          segments[i] = segments[i].replace(" " + table, "");
+          if (segments[i].trim() == "table") {
+            segments[i] = "";
+          }
+        }
+        if (segments[i].length > 0) {
+          newQuery = newQuery.trim() + " | " + segments[i].trim();
+        }
+      }
+      this.query = newQuery.trim();
+      if (!this.notifyInputsChanged()) {
+        this.obtainQueryDetails();
+      }        
+    },
     buildCurrentRoute() {
       return { path: this.category, query: { q: this.query, t: this.dateRange, z: this.zone, el: this.eventLimit, gl: this.groupByLimit }};
     },
@@ -686,6 +744,11 @@ const huntComponent = {
     buildGroupByRoute(field) {
       route = this.buildCurrentRoute()
       route.query.groupByField = field;
+      return route;
+    },
+    buildTableRoute(field) {
+      route = this.buildCurrentRoute()
+      route.query.tableField = field;
       return route;
     },
     countDrilldown(event) {
@@ -725,6 +788,7 @@ const huntComponent = {
         this.filterRouteExact = this.buildFilterRoute(field, value, FILTER_EXACT);
         this.filterRouteDrilldown = this.buildFilterRoute(field, value, FILTER_DRILLDOWN);
         this.groupByRoute = this.buildGroupByRoute(field);
+        this.tableRoute = this.buildTableRoute(field);
         var route = this;
         this.actions.forEach(function(action, index) {
           action.enabled = true;
@@ -805,6 +869,20 @@ const huntComponent = {
       });
       return headers;
     },
+    constructTableHeaders(fields) {
+      var headers = [];
+      var i18n = this.i18n;
+      fields.forEach(function(item, index) {
+        var i18nKey = "field_" + item;
+        var header = {
+          text: i18n[i18nKey] ? i18n[i18nKey] : item,
+          value: item,
+          sortable: false,
+        };
+        headers.push(header);
+      });
+      return headers;
+    },
     constructGroupByRows(fields, data) {
       const records = [];
       const route = this;
@@ -819,16 +897,52 @@ const huntComponent = {
       });
       return records;
     },
+    constructTableRows(field, data) {
+      const records = [];
+      const route = this;
+      data.forEach(function(row, index) {
+        var record = {
+          count: row.value,
+          field: route.localizeValue(row.keys[0])
+        };
+        records.push(record);
+      });
+      return records;
+    },
     populateGroupByTable(metrics) {
       var key = this.lookupFullGroupByMetricKey(metrics);
-      var fields = key.split("|");
-      if (fields.length > 1 && fields[0] == "groupby") {
-        fields.shift();
-        this.groupByFields = [...fields];
-        this.groupByData = this.constructGroupByRows(fields, metrics[key])
-        fields.unshift("count");
-        fields.unshift(""); // Leave empty header column for optional action buttons/icons
-        this.groupByHeaders = this.constructHeaders(fields);
+      if (key != null) {
+        var fields = key.split("|");
+        if (fields.length > 1 && fields[0].startsWith("groupby")) {
+          fields.shift();
+          this.groupByFields = [...fields];
+          this.groupByData = this.constructGroupByRows(fields, metrics[key])
+          fields.unshift("count");
+          fields.unshift(""); // Leave empty header column for optional action buttons/icons
+          this.groupByHeaders = this.constructHeaders(fields);
+          this.groupByEnabled = true;
+        }
+      }
+    },
+    populateIndividualTables(metrics) {
+      const route = this;
+      var key = this.lookupFullTableMetricKey(metrics);
+      if (key != null) {
+        var fields = key.split("|");
+        if (fields.length > 1 && fields[0].startsWith("table")) {
+          fields.shift();
+          this.groupByFields = [...fields];
+          route.tableHeaders = [];
+          route.tableData = [];
+          fields.forEach(function(field, index) {
+            const tempfields = [];
+            tempfields.unshift(field);
+            tempfields.unshift("count");
+            route.tableHeaders.push(route.constructTableHeaders(tempfields));
+            route.tableData.push(route.constructTableRows(field, metrics["table-" + index + "|" + field]));
+          });
+          this.tableEnabled = true;
+        }
       }
     },
     populateEventTable(events) {
@@ -908,7 +1022,7 @@ const huntComponent = {
     lookupFullGroupByMetricKey(metrics) {
       var desiredKey = null;
       for (const key in metrics) {
-        if (key.startsWith("groupby|")) {
+        if (key.startsWith("groupby")) {
           if (desiredKey == null) {
             desiredKey = key;
           } else if (key.length > desiredKey.length) {
@@ -918,10 +1032,26 @@ const huntComponent = {
       }
       return desiredKey;
     },
+    lookupFullTableMetricKey(metrics) {
+      var desiredKey = null;
+      for (const key in metrics) {
+        if (key.startsWith("table")) {
+          if (desiredKey == null) {
+            desiredKey = key;
+          } else {
+            desiredKey = desiredKey + "|" + key.split("|")[1];
+          }
+        }
+      }
+      return desiredKey;
+    },
     lookupTopMetricKey(metrics) {
       var desiredKey = null;
       for (const key in metrics) {
-        if (key.startsWith("groupby|")) {
+        if (key.startsWith("table")) {
+          return key;
+        }
+        if (key.startsWith("groupby")) {
           if (desiredKey == null) {
             desiredKey = key;
           } else if (key.length < desiredKey.length) {
@@ -1208,3 +1338,6 @@ routes.push({ path: '/alerts', name: 'alerts', component: alertsComponent});
 
 const casesComponent = Object.assign({}, huntComponent);
 routes.push({ path: '/cases', name: 'cases', component: casesComponent});
+
+const dashboardsComponent = Object.assign({}, huntComponent);
+routes.push({ path: '/dashboards', name: 'dashboards', component: dashboardsComponent});
